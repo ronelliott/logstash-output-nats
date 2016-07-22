@@ -34,21 +34,21 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     #   @logger.debug("NATS connected")
     # }
     connect {
-      @logger.debug("NATS connected")
-      @codec.on_event(&method(:send_to_nats))
+      @logger.debug("nats: NATS connected")
     }
-    @logger.debug("Nats output registered")
+    @codec.on_event(&method(:send_to_nats))
+    @logger.debug("nats: Output registered")
   end # def register
 
   public
   def receive(event)
-    @logger.debug("Received event")
+    @logger.debug("nats: Received event")
     # TODO(sissel): We really should not drop an event, but historically
     # we have dropped events that fail to be converted to json.
     # TODO(sissel): Find a way to continue passing events through even
     # if they fail to convert properly.
     begin
-      @logger.debug("Encoding event")
+      @logger.debug("nats: Encoding event")
       @codec.encode(event)
     rescue LocalJumpError
       # This LocalJumpError rescue clause is required to test for regressions
@@ -56,7 +56,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
       # see specs. Without it the LocalJumpError is rescued by the StandardError
       raise
     rescue StandardError => e
-      @logger.warn("Error encoding event", :exception => e,
+      @logger.warn("nats: Error encoding event", :exception => e,
         :event => event)
     end
   end # def event
@@ -80,19 +80,19 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     # }
 
     NATS.on_error do |e|
-      @logger.warn("Nats error", :error => e)
+      @logger.warn("nats: NATS error", :error => e)
     end
 
     NATS.on_disconnect do |reason|
-      @logger.warn("Nats disconnected", :reason => reason)
+      @logger.warn("nats: NATS disconnected", :reason => reason)
     end
 
     NATS.on_reconnect do |nats|
-      @logger.warn("Nats reconnected", :server => nats.connected_server)
+      @logger.warn("nats: NATS reconnected", :server => nats.connected_server)
     end
 
     NATS.on_close do
-      @logger.warn("NATS connection closed")
+      @logger.warn("nats: NATS connection closed")
     end
 
     Thread.new { NATS.start(params, &blk) }
@@ -102,12 +102,12 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     # How can I do this sort of thing with codecs?
     key = event.sprintf(@key)
 
-    @logger.debug("Publishing event", :key => key)
+    @logger.debug("nats: Publishing event", :key => key)
 
     begin
       NATS.publish(key, payload)
     rescue => e
-      @logger.warn("Failed to send event to Nats",
+      @logger.warn("nats: Failed to send event to Nats",
         :event => event,
         :exception => e,
         :backtrace => e.backtrace)
