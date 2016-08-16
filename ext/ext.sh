@@ -1,1 +1,1 @@
-swig -v -I../cnats/src/install/lib -ruby nats.i && ruby extconf.rb && make && cp nats.bundle ../lib
+swig -v -I../cnats/src/install/include -ruby nats.i && ruby extconf.rb && make && cp nats.bundle ../lib
