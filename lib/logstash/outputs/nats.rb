@@ -1,8 +1,7 @@
 # encoding: utf-8
 require "logstash/outputs/base"
 require "logstash/namespace"
-require "nats/client"
-require "eventmachine"
+require "nats"
 
 # An example output that does nothing.
 class LogStash::Outputs::Nats < LogStash::Outputs::Base
@@ -30,9 +29,6 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   public
   def register
     @host.shuffle!
-    # connect {
-    #   @logger.debug("NATS connected")
-    # }
     connect {
       @logger.debug("nats: NATS connected")
     }
