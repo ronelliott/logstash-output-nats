@@ -13,6 +13,8 @@ require "uri"
 class LogStash::Outputs::Nats < LogStash::Outputs::Base
   conn = nil
 
+  default :codec "json"
+
   config_name "nats"
 
   # The subject to use
