@@ -1,6 +1,6 @@
 # Logstash Plugin
 
-`jruby -S gem build logstash-output-nats.gemspec && logstash-plugin install --no-verify logstash-output-nats-1.0.0.gem`
+`jruby -S gem build logstash-output-nats.gemspec && logstash-plugin install --no-verify logstash-output-nats-2.0.0.gem`
 
 [![Travis Build Status](https://travis-ci.org/logstash-plugins/logstash-output-example.svg)](https://travis-ci.org/logstash-plugins/logstash-output-example)
 
