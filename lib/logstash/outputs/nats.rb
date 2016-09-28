@@ -15,7 +15,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
 
   config_name "nats"
 
-  config :codec, :validate => :string, :default "json", :required => true
+  config :codec, :validate => :string, :default => "json", :required => true
 
   # The subject to use
   config :subject, :validate => :string, :required => true
