@@ -13,9 +13,9 @@ require "uri"
 class LogStash::Outputs::Nats < LogStash::Outputs::Base
   conn = nil
 
-  default :codec "json"
-
   config_name "nats"
+
+  config :codec, :validate => :string, :default "json", :required => true
 
   # The subject to use
   config :subject, :validate => :string, :required => true
