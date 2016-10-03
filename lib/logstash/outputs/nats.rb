@@ -13,7 +13,7 @@ require "uri"
 class LogStash::Outputs::Nats < LogStash::Outputs::Base
   conn = nil
 
-  default :codec "json"
+  default :codec, "json"
 
   config_name "nats"
 
@@ -22,9 +22,6 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
 
   # The hostname or IP address to reach your NATS instance
   config :server, :validate => :string, :default => "nats://0.0.0.0:4222", :required => true
-
-  # The reconnect retry time wait duration
-  config :retry_time_wait, :validate => :number, :default => 0.1, :required => true
 
   # This sets the concurrency behavior of this plugin. By default it is :legacy, which was the standard
   # way concurrency worked before Logstash 2.4
@@ -40,17 +37,16 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   #
   # Only the `#multi_receive/#multi_receive_encoded` methods need to actually be threadsafe, the other methods
   # will only be executed in a single thread
-  # concurrency :single
+  # concurrency :shared
   # ^ seems to frag plugin loading, "NoMethodError"
 
-  def close
-    puts "close"
+  def register
+    @codec.on_event &method(:send_to_nats)
   end
 
   def get_nats_connection
     if @conn == nil
-      @logger.info "NATS: connecting to #{@server}"
-      @conn = NatsConnection.new @server
+      @conn = NatsConnection.new @server, @logger
     end
 
     @conn
@@ -66,26 +62,18 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     begin
       @logger.info "NATS: Encoding event"
       @codec.encode event
-    rescue LocalJumpError
-      # This LocalJumpError rescue clause is required to test for regressions
-      # for https://github.com/logstash-plugins/logstash-output-redis/issues/26
-      # see specs. Without it the LocalJumpError is rescued by the StandardError
-      raise
-    rescue StandardError => e
+    rescue Exception => e
       @logger.warn "NATS: Error encoding event", :exception => e, :event => event
     end
-  end
-
-  def register
-    @codec.on_event &method(:send_to_nats)
   end
 
   def send_to_nats(event, payload)
     key = event.sprintf @subject
     @logger.info "NATS: publishing event #{key}"
 
+    conn = nil
+
     begin
-      retries ||= 0
       conn = get_nats_connection
       conn.publish key, payload
     rescue => e
@@ -93,86 +81,117 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
         :event => event,
         :exception => e,
         :backtrace => e.backtrace)
-      sleep @retry_time_wait
-      conn.reconnect
       retry
     end
   end
 end
 
+# The NATS connection client
 class NatsConnection
-  def initialize(uri)
+  def initialize(uri, logger)
     super()
-    @mutex = Mutex.new
-    @uri = uri
+    @uri = URI(uri)
+    @logger = logger
+    @queue = Queue.new
   end
 
   public
-  def cleanup
-    @socket = nil
-    @thread = nil
+  def connect
+    if @socket == nil || @socket.closed?
+      do_connect_sequence
+
+      @thread = Thread.new do
+        connection_handler
+      end
+    end
+
+    @socket
+  end
+
+  private
+  def do_connect_sequence
+    @logger.debug("NatsConnection: Connecting to: #{@uri.host}:#{@uri.port}")
+    @socket = TCPSocket.new @uri.host, @uri.port
+
+    result = @socket.gets # this should be an INFO payload
+    if !(result =~ /^INFO /)
+      # didn't get an info payload, error out
+      @logger.error "NatsConnection: ERROR: #{@socket.gets}"
+      raise "Unexpected state: #{result}"
+    end
+
+    @socket.write generate_connect_data
+    result = @socket.gets # this should be an '+OK' payload
+
+    if !(result =~ /^\+OK/)
+      raise "Server connection failed: #{result}"
+    end
+  end
+
+  private
+  def connection_handler
+    loop do
+      message = nil
+
+      begin
+        # check if the server has sent a PING message
+        if @socket.ready?
+          result = @socket.gets
+
+          if result =~ /^PING/
+            @socket.write "PONG\r\n"
+          end
+        end
+
+        # send a buffered message
+        message = @queue.pop false
+        @socket.write message
+        @socket.flush
+
+        # check the response
+        result = @socket.gets
+
+        # the response should be "+OK"
+        if !(result =~ /^\+OK/)
+          @logger.warn "NatsConnection: Could not send event, re-queuing #{result}"
+          @logger.debug message
+          @queue << message
+        end
+
+      rescue Exception => e
+        @logger.error("NatsConnection: Error while operating",
+          :exception => e,
+          :backtrace => e.backtrace)
+
+        if message != nil
+          @queue << message
+        end
+
+        @socket.close
+        @socket = nil
+        do_connect_sequence
+        retry
+      end
+    end
   end
 
   public
   def close
     if @thread != nil
-      @thread.kill
+      @thread.join
+      @thread = nil
     end
 
-    if connected?
+    if @socket != nil
       @socket.close
+      @socket = nil
     end
-
-    cleanup
-  end
-
-  public
-  def connect
-    if @socket == nil
-      uri = URI(@uri)
-      @socket = TCPSocket.new uri.host, uri.port
-
-      result = receive # this should be an INFO payload
-      if !(result =~ /^INFO /)
-        # didn't get an info payload, error out
-        raise "Unexpected state: #{result}"
-      end
-
-      @socket.puts generate_connect_data
-      result = receive # this should be an '+OK' payload
-
-      if !(result =~ /^\+OK/)
-        raise "Server connection failed: #{result}"
-      end
-      @thread = Thread.new do
-        handle_pings
-      end
-    end
-    @socket
-  end
-
-  private
-  def handle_pings
-    loop do
-      if @socket.ready?
-        result = receive
-        if result =~ /^PING/
-          send "PONG"
-        end
-      end
-    end
-  end
-
-  public
-  def connected?
-    # probably should actually ping the server here
-    @socket != nil && !@socket.closed?
   end
 
   public
   def generate_connect_data
     opts = {
-      :pendantic => true,
+      :pendantic => false,
       :verbose => true,
       :ssl_required => false,
       :name => "PureRubyNatsPublisher",
@@ -189,7 +208,7 @@ class NatsConnection
       data = data.to_json
     end
 
-    "PUB #{subject} #{data.length}\r\n#{data}\r\n"
+    "PUB #{subject} #{data.bytes.to_a.length}\r\n#{data}\r\n"
   end
 
   public
@@ -200,37 +219,11 @@ class NatsConnection
   end
 
   public
-  def receive
-    begin
-      @socket.gets
-    rescue Exception => e
-      puts e
-      reconnect
-    end
-  end
-
-  public
-  def reconnect
-    close
-    connect
-  end
-
-  public
   def send(data)
-    loop do
-      begin
-        if @mutex.try_lock
-          # should probably check for "+OK" here
-          @socket.puts data
-          @mutex.unlock
-          return
-        end
-      rescue Exception => e
-        @mutex.unlock
-        puts e
-        reconnect
-      end
+    @queue << data
+
+    # block until the queue is empty
+    until @queue.empty? do
     end
   end
 end
-
