@@ -60,7 +60,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     end
 
     begin
-      @logger.info "NATS: Encoding event"
+      @logger.debug "NATS: Encoding event"
       @codec.encode event
     rescue Exception => e
       @logger.warn "NATS: Error encoding event", :exception => e, :event => event
@@ -69,7 +69,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
 
   def send_to_nats(event, payload)
     key = event.sprintf @subject
-    @logger.info "NATS: publishing event #{key}"
+    @logger.debug "NATS: Publishing event to #{key}"
 
     conn = nil
 
@@ -97,7 +97,7 @@ class NatsConnection
 
   public
   def connect
-    if @socket == nil || @socket.closed?
+    if !connected?
       do_connect_sequence
 
       @thread = Thread.new do
@@ -109,8 +109,14 @@ class NatsConnection
   end
 
   private
+  def connected?
+    if @socket != nil then !@socket.closed? else false end
+  end
+
+  private
   def do_connect_sequence
-    @logger.debug("NatsConnection: Connecting to: #{@uri.host}:#{@uri.port}")
+    close_socket
+    @logger.info "NatsConnection: Connecting to: #{@uri.host}:#{@uri.port}"
     @socket = TCPSocket.new @uri.host, @uri.port
 
     result = @socket.gets # this should be an INFO payload
@@ -135,27 +141,25 @@ class NatsConnection
 
       begin
         # check if the server has sent a PING message
-        if @socket.ready?
-          result = @socket.gets
-
-          if result =~ /^PING/
-            @socket.write "PONG\r\n"
-          end
+        result = receive
+        if result =~ /^PING/
+          send "PONG\r\n"
         end
 
-        # send a buffered message
-        message = @queue.pop false
-        @socket.write message
-        @socket.flush
+        if has_queued_messages?
+          # send a buffered message
+          message = unqueue_message
+          send message
 
-        # check the response
-        result = @socket.gets
+          # check the response
+          result = receive
+          until result =~ /^\+OK/ do
+            if result =~ /^PING/
+              send "PONG\r\n"
+            end
 
-        # the response should be "+OK"
-        if !(result =~ /^\+OK/)
-          @logger.warn "NatsConnection: Could not send event, re-queuing #{result}"
-          @logger.debug message
-          @queue << message
+            result = receive
+          end
         end
 
       rescue Exception => e
@@ -164,11 +168,9 @@ class NatsConnection
           :backtrace => e.backtrace)
 
         if message != nil
-          @queue << message
+          queue_message message
         end
 
-        @socket.close
-        @socket = nil
         do_connect_sequence
         retry
       end
@@ -177,14 +179,23 @@ class NatsConnection
 
   public
   def close
-    if @thread != nil
-      @thread.join
-      @thread = nil
-    end
+    close_thread
+    close_socket
+  end
 
+  private
+  def close_socket
     if @socket != nil
       @socket.close
       @socket = nil
+    end
+  end
+
+  private
+  def close_thread
+    if @thread != nil
+      @thread.join
+      @thread = nil
     end
   end
 
@@ -211,19 +222,40 @@ class NatsConnection
     "PUB #{subject} #{data.bytes.to_a.length}\r\n#{data}\r\n"
   end
 
-  public
-  def publish(subject, data)
-    connect
-    line = generate_publish_data subject, data
-    send line
+  private
+  def queue_message(message)
+    @queue << message
+  end
+
+  private
+  def unqueue_message
+    @queue.pop false
+  end
+
+  private
+  def has_queued_messages?
+    !@queue.empty?
   end
 
   public
-  def send(data)
-    @queue << data
+  def publish(subject, data)
+    connect
+    message = generate_publish_data subject, data
+    queue_message message
 
     # block until the queue is empty
-    until @queue.empty? do
+    until !has_queued_messages? do
     end
+  end
+
+  private
+  def receive
+    @socket.gets if @socket.ready?
+  end
+
+  private
+  def send(data)
+    @socket.write data
+    @socket.flush
   end
 end
