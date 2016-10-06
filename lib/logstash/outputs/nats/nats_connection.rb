@@ -28,10 +28,7 @@ class NatsConnection
     if !connected?
       do_connect_sequence
       create_socket
-
-      @thread = Thread.new do
-        connection_handler
-      end
+      create_thread
     end
 
     @socket
