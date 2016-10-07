@@ -3,12 +3,7 @@
 require "logstash/outputs/base"
 require "logstash/namespace"
 
-require "json"
-require "thread"
-
-require "nats/client"
-
-# require_relative "nats/nats_connection"
+require_relative "nats/nats_connection"
 
 # A NATS output for logstash
 class LogStash::Outputs::Nats < LogStash::Outputs::Base
@@ -85,79 +80,5 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
         :backtrace => e.backtrace)
       retry
     end
-  end
-end
-
-class NATSConnection
-  def initialize(uri, logger)
-    @logger = logger
-    @queue = Queue.new
-    @uris = [ uri ]
-
-    Thread.new do
-      connection_handler
-    end
-
-    super()
-  end
-
-  public
-  def block_until_empty
-    # block until the queue is empty
-    until !has_queued_messages? do
-    end
-  end
-
-  public
-  def has_queued_messages?
-    !@queue.empty?
-  end
-
-  public
-  def queue_message(message)
-    @queue << message
-  end
-
-  public
-  def unqueue_message
-    @queue.pop
-  end
-
-  def connection_handler
-    NATS.start({
-      :servers => @uris,
-    }) do |nc|
-      nc.on_reconnect do
-        @logger.warn "NATSConnection: Reconnected to server at #{nc.connected_server}"
-      end
-
-      nc.on_disconnect do |reason|
-        @logger.warn "NATSConnection: Disconnected: #{reason}"
-      end
-
-      nc.on_close do
-        @logger.warn "NATSConnection: Connection to NATS closed"
-      end
-
-      @logger.warn "NATSConnection: Running..."
-
-      EM.tick_loop do
-        message = unqueue_message
-        nc.publish message[:subject], message[:data]
-      end
-    end
-  end
-
-  def publish(subject, data)
-    if !data.is_a? String
-      data = data.to_json
-    end
-
-    queue_message({
-      :subject => subject,
-      :data => data,
-    })
-
-    block_until_empty
   end
 end
