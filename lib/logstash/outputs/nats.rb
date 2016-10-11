@@ -20,7 +20,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   config :server, :validate => :string, :default => "nats://0.0.0.0:4222", :required => true
 
   # The time to wait before reconnecting to the server when failing to publish
-  config :reconnect_time_wait, :validate => :number, :default => 0.5, :required => true
+  config :reconnect_time_wait, :validate => :number, :default => 1.0, :required => true
 
   # This sets the concurrency behavior of this plugin. By default it is :legacy, which was the standard
   # way concurrency worked before Logstash 2.4
@@ -56,6 +56,14 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     end
   end
 
+  def recreate_nats_connection
+    if @conn != nil
+      @conn.close
+    end
+
+    get_nats_connection
+  end
+
   # Needed for logstash < 2.2 compatibility
   # Takes events one at a time
   def receive(event)
@@ -86,7 +94,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
         :exception => e)
       @logger.debug "NATS: Backtrace: ", :backtrace => e.backtrace
       sleep @reconnect_time_wait
-      reconnect_nats_connection
+      recreate_nats_connection
       retry
     end
   end
