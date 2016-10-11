@@ -3,7 +3,7 @@
 require "logstash/outputs/base"
 require "logstash/namespace"
 
-require_relative "nats/nats_connection"
+require_relative "nats/connection"
 
 # A NATS output for logstash
 class LogStash::Outputs::Nats < LogStash::Outputs::Base
@@ -19,6 +19,9 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   # The hostname or IP address to reach your NATS instance
   config :server, :validate => :string, :default => "nats://0.0.0.0:4222", :required => true
 
+  # The time to wait before reconnecting to the server when failing to publish
+  config :reconnect_time_wait, :validate => :number, :default => 0.5, :required => true
+
   # This sets the concurrency behavior of this plugin. By default it is :legacy, which was the standard
   # way concurrency worked before Logstash 2.4
   #
@@ -33,8 +36,6 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   #
   # Only the `#multi_receive/#multi_receive_encoded` methods need to actually be threadsafe, the other methods
   # will only be executed in a single thread
-  # concurrency :shared
-  # ^ seems to frag plugin loading, "NoMethodError"
   concurrency :single
 
   def register
@@ -49,6 +50,12 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     @conn
   end
 
+  def reconnect_nats_connection
+    if @conn != nil
+      @conn.reconnect
+    end
+  end
+
   # Needed for logstash < 2.2 compatibility
   # Takes events one at a time
   def receive(event)
@@ -57,10 +64,12 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     end
 
     begin
-      @logger.debug "NATS: Encoding event"
       @codec.encode event
     rescue Exception => e
-      @logger.warn "NATS: Error encoding event", :exception => e, :event => event
+      @logger.warn("NATS: Error encoding event",
+        :event => event,
+        :exception => e)
+      @logger.debug "NATS: Backtrace: ", :backtrace => e.backtrace
     end
   end
 
@@ -68,17 +77,18 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
     key = event.sprintf @subject
     @logger.debug "NATS: Publishing event to #{key}"
 
-    conn = nil
-
     begin
       conn = get_nats_connection
       conn.publish key, payload
-    rescue => e
+    rescue Exception => e
       @logger.warn("NATS: failed to send event",
         :event => event,
-        :exception => e,
-        :backtrace => e.backtrace)
+        :exception => e)
+      @logger.debug "NATS: Backtrace: ", :backtrace => e.backtrace
+      sleep @reconnect_time_wait
+      reconnect_nats_connection
       retry
     end
   end
 end
+
