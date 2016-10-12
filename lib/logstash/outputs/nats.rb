@@ -17,10 +17,13 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   config :subject, :validate => :string, :required => true
 
   # The hostname or IP address to reach your NATS instance
-  config :server, :validate => :string, :default => "nats://0.0.0.0:4222", :required => true
+  config :host, :validate => :string, :default => "nats://0.0.0.0:4222", :required => true
 
   # The time to wait before reconnecting to the server when failing to publish
-  config :reconnect_time_wait, :validate => :number, :default => 1.0, :required => true
+  config :max_reconnect_count, :validate => :number, :default => -1, :required => true
+
+  # The time to wait before reconnecting to the server when failing to publish
+  config :reconnect_time_wait, :validate => :number, :default => 1000, :required => true
 
   # This sets the concurrency behavior of this plugin. By default it is :legacy, which was the standard
   # way concurrency worked before Logstash 2.4
@@ -44,7 +47,11 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
 
   def get_nats_connection
     if @conn == nil
-      @conn = NATSConnection.new @server, @logger
+      @conn = NATSConnection.new(
+        @host,
+        @logger,
+        @reconnect_time_wait,
+        @max_reconnect_count)
     end
 
     @conn
@@ -93,8 +100,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
         :event => event,
         :exception => e)
       @logger.debug "NATS: Backtrace: ", :backtrace => e.backtrace
-      sleep @reconnect_time_wait
-      recreate_nats_connection
+      sleep (@reconnect_time_wait / 1000)
       retry
     end
   end

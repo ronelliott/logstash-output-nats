@@ -10,8 +10,10 @@ require_relative "jars/jnats-0.5.3.jar"
 java_import "io.nats.client.ConnectionFactory"
 
 class NATSConnection
-	def initialize(uri, logger=nil)
+	def initialize(uri, logger=nil, max_reconnect=-1, reconnect_time_wait=1.0)
 		super()
+		@max_reconnect = max_reconnect
+		@reconnect_time_wait = reconnect_time_wait
 		@logger = logger
 		@uri = uri
 	end
@@ -28,8 +30,9 @@ class NATSConnection
 	def connect
 		if @conn == nil
 			cf = ConnectionFactory.new @uri
-			cf.setMaxReconnect(0);
-			@conn = cf.createConnection();
+			cf.setMaxReconnect @max_reconnect
+			cf.setReconnectWait @reconnect_time_wait
+			@conn = cf.createConnection()
 
 			@conn.set_closed_callback do |event|
 				@logger.warn "NATSConnection: Connection to #{@uri} closed."
