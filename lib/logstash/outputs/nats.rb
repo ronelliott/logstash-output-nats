@@ -58,7 +58,8 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
         @logger,
         @max_reconnect_count,
         @reconnect_time_wait,
-        @reconnect_buf_size)
+        @reconnect_buf_size,
+        @publish_timeout)
     end
 
     @conn
@@ -95,7 +96,7 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
 
     begin
       conn = get_nats_connection
-      conn.publish key, payload, @publish_timeout
+      conn.publish key, payload
     rescue Exception => e
       @logger.warn("NATS: failed to send event",
         :event => event,

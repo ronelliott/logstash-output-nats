@@ -2,15 +2,12 @@
 
 require "java"
 # uncomment these lines to allow jnats to log
-#require_relative "jars/log4j-1.2.17.jar"
-#require_relative "jars/slf4j-log4j12-1.7.21.jar"
-#require_relative "jars/slf4j-nop-1.7.21.jar"
 require_relative "jars/slf4j-simple-1.7.21.jar"
 require_relative "jars/slf4j-api-1.7.21.jar"
 require_relative "jars/jnats-0.5.3.jar"
 java_import "io.nats.client.ConnectionFactory"
 
-java.lang.System.setProperty "org.slf4j.simpleLogger.defaultLogLevel", "trace"
+java.lang.System.setProperty "org.slf4j.simpleLogger.defaultLogLevel", "warn"
 
 class NATSConnection
   def initialize(
@@ -66,8 +63,12 @@ class NATSConnection
     connect
   end
 
-  def publish(subject, data, timeout)
+  def publish(subject, data)
     connect
+
+    if @conn.closed?
+      raise "Socket not open!"
+    end
 
     # really this should be something like !(data.is_a? JavaBytes)
     if data.is_a? String
@@ -75,7 +76,7 @@ class NATSConnection
     end
 
     @conn.publish subject, data
-    @conn.flush timeout
+    @conn.flush @publish_timeout
   end
 end
 
