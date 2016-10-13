@@ -1,7 +1,6 @@
 # encoding: utf-8
 
 require "java"
-# uncomment these lines to allow jnats to log
 require_relative "jars/slf4j-simple-1.7.21.jar"
 require_relative "jars/slf4j-api-1.7.21.jar"
 require_relative "jars/jnats-0.5.3.jar"
