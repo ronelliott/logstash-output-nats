@@ -25,6 +25,12 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
   # The time to wait before reconnecting to the server when failing to publish
   config :reconnect_time_wait, :validate => :number, :default => 1000, :required => true
 
+  # The size of the buffer to use when buffering messages during a reconnect
+  config :reconnect_buf_size, :validate => :number, :default => (8 * 1024 * 1024), :required => true
+
+  # The timeout to use when publishing
+  config :publish_timeout, :validate => :number, :default => 1000, :required => true
+
   # This sets the concurrency behavior of this plugin. By default it is :legacy, which was the standard
   # way concurrency worked before Logstash 2.4
   #
@@ -50,17 +56,12 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
       @conn = NATSConnection.new(
         @host,
         @logger,
+        @max_reconnect_count,
         @reconnect_time_wait,
-        @max_reconnect_count)
+        @reconnect_buf_size)
     end
 
     @conn
-  end
-
-  def reconnect_nats_connection
-    if @conn != nil
-      @conn.reconnect
-    end
   end
 
   def recreate_nats_connection
@@ -94,13 +95,14 @@ class LogStash::Outputs::Nats < LogStash::Outputs::Base
 
     begin
       conn = get_nats_connection
-      conn.publish key, payload
+      conn.publish key, payload, @publish_timeout
     rescue Exception => e
       @logger.warn("NATS: failed to send event",
         :event => event,
         :exception => e)
       @logger.debug "NATS: Backtrace: ", :backtrace => e.backtrace
       sleep (@reconnect_time_wait / 1000)
+      recreate_nats_connection
       retry
     end
   end
